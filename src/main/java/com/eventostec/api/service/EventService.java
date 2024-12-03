@@ -1,6 +1,7 @@
 package com.eventostec.api.service;
 
 import com.amazonaws.services.s3.AmazonS3;
+import com.eventostec.api.domain.address.Address;
 import com.eventostec.api.domain.event.Event;
 import com.eventostec.api.domain.event.EventRequestDTO;
 import com.eventostec.api.domain.event.EventResponseDTO;
@@ -15,6 +16,8 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.Date;
 import java.util.List;
 import java.util.Objects;
@@ -22,14 +25,14 @@ import java.util.UUID;
 
 @Service
 public class EventService {
-
     @Value("${aws.bucket.name}")
     private String bucketName;
-
     @Autowired
     private AmazonS3 s3Client;
     @Autowired
     private EventRepository eventRepository;
+    @Autowired
+    private AddressService addressService;
 
     public Event createEvent(EventRequestDTO data) {
         String imgUrl = null;
@@ -45,8 +48,11 @@ public class EventService {
         newEvent.setDate(new Date(data.date()));
         newEvent.setImgUrl(imgUrl);
         newEvent.setRemote(data.remote());
-
         eventRepository.save(newEvent);
+
+        if (!data.remote()) {
+            this.addressService.createAddress(data, newEvent);
+        }
 
         return newEvent;
     }
@@ -80,8 +86,45 @@ public class EventService {
     public List<EventResponseDTO> getUpcomingEvents(int page, int size) {
         Pageable pageable = PageRequest.of(page, size);
         Page<Event> eventsPage = this.eventRepository.findUpcomingEvents(new Date(), pageable);
-        return eventsPage.map(event -> new EventResponseDTO(event.getId(), event.getTitle(), event.getDescription(),
-                event.getDate(), "", "", event.getRemote(), event.getEventUrl(), event.getImgUrl()))
-                .stream().toList();
+        return eventsPage.map(event -> new EventResponseDTO(
+                event.getId(),
+                event.getTitle(),
+                event.getDescription(),
+                event.getDate(),
+                event.getAddress() != null ? event.getAddress().getCity() : "",
+                event.getAddress() != null ? event.getAddress().getUf() : "",
+                event.getRemote(),
+                event.getEventUrl(),
+                event.getImgUrl())
+        ).stream().toList();
+    }
+
+    public List<EventResponseDTO> getFilteredEvents(int page, int size, String title, String city, String uf,
+                                                    Date startDate, Date endDate) {
+        // validate input
+        title = (title != null) ? title : "";
+        city = (city != null) ? city : "";
+        uf = (uf != null) ? uf : "";
+        startDate = (startDate != null) ? startDate : new Date();
+        if (endDate == null || endDate.before(startDate)) {
+            LocalDate currentDate = LocalDate.now();
+            LocalDate tenYearsFromNow = currentDate.plusYears(10);
+            endDate = Date.from(tenYearsFromNow.atStartOfDay(ZoneId.systemDefault()).toInstant());
+        }
+
+        Pageable pageable = PageRequest.of(page, size);
+        Page<Event> eventsPage = this.eventRepository.findFilteredEvents(title, city, uf, startDate,
+                endDate, pageable);
+        return eventsPage.map(event -> new EventResponseDTO(
+                event.getId(),
+                event.getTitle(),
+                event.getDescription(),
+                event.getDate(),
+                event.getAddress() != null ? event.getAddress().getCity() : "",
+                event.getAddress() != null ? event.getAddress().getUf() : "",
+                event.getRemote(),
+                event.getEventUrl(),
+                event.getImgUrl())
+        ).stream().toList();
     }
 }
